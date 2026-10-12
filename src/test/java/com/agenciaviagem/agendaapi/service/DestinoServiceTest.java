@@ -3,21 +3,25 @@ package com.agenciaviagem.agendaapi.service;
 import com.agenciaviagem.agendaapi.dto.DestinoRequest;
 import com.agenciaviagem.agendaapi.exception.ResourceNotFoundException;
 import com.agenciaviagem.agendaapi.model.Destino;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.context.annotation.Import;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Testa o DestinoService com o Spring Data JPA de verdade (H2 em memoria),
+ * sem precisar do PostgreSQL.
+ */
+@DataJpaTest
+@Import(DestinoService.class)
 class DestinoServiceTest {
 
+    @Autowired
     private DestinoService destinoService;
-
-    @BeforeEach
-    void setUp() {
-        destinoService = new DestinoService();
-    }
 
     @Test
     void cadastrar_deveSalvarDestino() {
@@ -46,6 +50,14 @@ class DestinoServiceTest {
     }
 
     @Test
+    void pesquisar_semParametros_deveRetornarTodos() {
+        destinoService.cadastrar(criarDestinoRequest("Salvador", "Bahia", "Praias", 1800.0));
+        destinoService.cadastrar(criarDestinoRequest("Curitiba", "Parana", "Museus", 1700.0));
+
+        assertEquals(2, destinoService.pesquisar(null, null).size());
+    }
+
+    @Test
     void avaliar_deveRecalcularMedia() {
         Destino destino = destinoService.cadastrar(criarDestinoRequest("Porto Seguro", "Bahia", "Praia", 1900.0));
 
@@ -54,6 +66,14 @@ class DestinoServiceTest {
 
         assertEquals(2, destino.getQuantidadeAvaliacoes());
         assertEquals(9.0, destino.getNotaMedia());
+    }
+
+    @Test
+    void avaliar_comNotaInvalida_deveLancarExcecao() {
+        Destino destino = destinoService.cadastrar(criarDestinoRequest("Gramado", "RS", "Serra", 900.0));
+
+        assertThrows(IllegalArgumentException.class, () -> destinoService.avaliar(destino.getId(), 11));
+        assertThrows(IllegalArgumentException.class, () -> destinoService.avaliar(destino.getId(), 0));
     }
 
     @Test

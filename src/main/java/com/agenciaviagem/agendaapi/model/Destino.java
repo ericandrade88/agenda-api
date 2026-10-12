@@ -1,38 +1,52 @@
 package com.agenciaviagem.agendaapi.model;
 
+import jakarta.persistence.*;
+
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Representa um destino de viagem oferecido pela agencia.
- * Nao ha persistencia em banco de dados: o repositorio em memoria
- * fica a cargo do DestinoService, conforme escopo do desafio.
+ * Agora persistido em banco de dados (tabela "destinos").
  */
+@Entity
+@Table(name = "destinos")
 public class Destino {
 
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(nullable = false)
     private String nome;
+
+    @Column(nullable = false)
     private String localizacao;
+
+    @Column(length = 1000)
     private String descricao;
+
+    @Column(name = "preco_pacote", nullable = false)
     private Double precoPacote;
 
     // Controle da media de avaliacoes (nota de 1 a 10)
-    private Double notaMedia;
-    private Integer quantidadeAvaliacoes;
+    @Column(name = "nota_media", nullable = false)
+    private Double notaMedia = 0.0;
 
+    @Column(name = "quantidade_avaliacoes", nullable = false)
+    private Integer quantidadeAvaliacoes = 0;
+
+    @OneToMany(mappedBy = "destino", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     private List<Reserva> reservas = new ArrayList<>();
 
     public Destino() {
     }
 
-    public Destino(Long id, String nome, String localizacao, String descricao, Double precoPacote) {
-        this.id = id;
+    public Destino(String nome, String localizacao, String descricao, Double precoPacote) {
         this.nome = nome;
         this.localizacao = localizacao;
         this.descricao = descricao;
         this.precoPacote = precoPacote;
-        this.notaMedia = 0.0;
-        this.quantidadeAvaliacoes = 0;
     }
 
     public Long getId() {

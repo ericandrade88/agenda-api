@@ -3,24 +3,27 @@ package com.agenciaviagem.agendaapi.service;
 import com.agenciaviagem.agendaapi.dto.ReservaRequest;
 import com.agenciaviagem.agendaapi.model.Destino;
 import com.agenciaviagem.agendaapi.model.Reserva;
+import com.agenciaviagem.agendaapi.repository.ReservaRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Camada de servico responsavel pela reserva de pacotes de viagem
  * para um destino especifico.
  */
 @Service
+@Transactional
 public class ReservaService {
 
     private final DestinoService destinoService;
-    private final AtomicLong sequenciaId = new AtomicLong(1);
+    private final ReservaRepository reservaRepository;
 
-    public ReservaService(DestinoService destinoService) {
+    public ReservaService(DestinoService destinoService, ReservaRepository reservaRepository) {
         this.destinoService = destinoService;
+        this.reservaRepository = reservaRepository;
     }
 
     /**
@@ -31,22 +34,20 @@ public class ReservaService {
         Destino destino = destinoService.buscarPorId(destinoId);
 
         Reserva reserva = new Reserva(
-                sequenciaId.getAndIncrement(),
-                destino.getId(),
+                destino,
                 request.getNomeCliente(),
                 request.getNumeroPessoas(),
                 LocalDate.now()
         );
-
-        destino.getReservas().add(reserva);
-        return reserva;
+        return reservaRepository.save(reserva);
     }
 
     /**
      * Lista todas as reservas feitas para um determinado destino.
      */
+    @Transactional(readOnly = true)
     public List<Reserva> listarPorDestino(Long destinoId) {
-        Destino destino = destinoService.buscarPorId(destinoId);
-        return destino.getReservas();
+        destinoService.buscarPorId(destinoId); // garante 404 se o destino nao existir
+        return reservaRepository.findByDestino_Id(destinoId);
     }
 }

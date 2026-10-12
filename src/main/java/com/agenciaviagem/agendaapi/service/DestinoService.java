@@ -3,59 +3,57 @@ package com.agenciaviagem.agendaapi.service;
 import com.agenciaviagem.agendaapi.dto.DestinoRequest;
 import com.agenciaviagem.agendaapi.exception.ResourceNotFoundException;
 import com.agenciaviagem.agendaapi.model.Destino;
+import com.agenciaviagem.agendaapi.repository.DestinoRepository;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 
 /**
  * Camada de servico responsavel por toda a logica de negocio relacionada
  * a destinos de viagem: cadastro, listagem, pesquisa, avaliacao e exclusao.
  *
- * Conforme o escopo do desafio, os dados sao mantidos em memoria
- * (sem integracao com banco de dados).
+ * Desafio 2: os dados agora sao persistidos via Spring Data JPA (PostgreSQL).
  */
 @Service
+@Transactional
 public class DestinoService {
 
-    private final Map<Long, Destino> destinos = new ConcurrentHashMap<>();
-    private final AtomicLong sequenciaId = new AtomicLong(1);
+    private final DestinoRepository destinoRepository;
+
+    public DestinoService(DestinoRepository destinoRepository) {
+        this.destinoRepository = destinoRepository;
+    }
 
     /**
      * Cadastra um novo destino de viagem.
      */
     public Destino cadastrar(DestinoRequest request) {
-        Long id = sequenciaId.getAndIncrement();
         Destino destino = new Destino(
-                id,
                 request.getNome(),
                 request.getLocalizacao(),
                 request.getDescricao(),
                 request.getPrecoPacote()
         );
-        destinos.put(id, destino);
-        return destino;
+        return destinoRepository.save(destino);
     }
 
     /**
      * Retorna todos os destinos cadastrados.
      */
+    @Transactional(readOnly = true)
     public List<Destino> listarTodos() {
-        return List.copyOf(destinos.values());
+        return destinoRepository.findAll();
     }
 
     /**
      * Busca um destino especifico pelo id, lancando excecao caso nao exista.
      */
+    @Transactional(readOnly = true)
     public Destino buscarPorId(Long id) {
-        Destino destino = destinos.get(id);
-        if (destino == null) {
-            throw new ResourceNotFoundException("Destino nao encontrado com id: " + id);
-        }
-        return destino;
+        return destinoRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Destino nao encontrado com id: " + id));
     }
 
     /**
@@ -63,13 +61,17 @@ public class DestinoService {
      * Os dois parametros sao opcionais; quando ambos sao informados, os dois
      * criterios devem ser atendidos.
      */
+    @Transactional(readOnly = true)
     public List<Destino> pesquisar(String nome, String localizacao) {
-        return destinos.values().stream()
-                .filter(destino -> nome == null || nome.isBlank()
-                        || destino.getNome().toLowerCase().contains(nome.toLowerCase()))
-                .filter(destino -> localizacao == null || localizacao.isBlank()
-                        || destino.getLocalizacao().toLowerCase().contains(localizacao.toLowerCase()))
-                .collect(Collectors.toList());
+        Specification<Destino> filtro = Specification.where(null);
+
+        if (nome != null && !nome.isBlank()) {
+            filtro = filtro.and(contem("nome", nome));
+        }
+        if (localizacao != null && !localizacao.isBlank()) {
+            filtro = filtro.and(contem("localizacao", localizacao));
+        }
+        return destinoRepository.findAll(filtro);
     }
 
     /**
@@ -81,7 +83,7 @@ public class DestinoService {
         destino.setLocalizacao(request.getLocalizacao());
         destino.setDescricao(request.getDescricao());
         destino.setPrecoPacote(request.getPrecoPacote());
-        return destino;
+        return destinoRepository.save(destino);
     }
 
     /**
@@ -102,15 +104,19 @@ public class DestinoService {
         destino.setQuantidadeAvaliacoes(novaQuantidade);
         destino.setNotaMedia(arredondar(novaMedia));
 
-        return destino;
+        return destinoRepository.save(destino);
     }
 
     /**
-     * Exclui um destino de viagem pelo id.
+     * Exclui um destino de viagem pelo id (as reservas do destino sao removidas em cascata).
      */
     public void excluir(Long id) {
-        buscarPorId(id);
-        destinos.remove(id);
+        destinoRepository.delete(buscarPorId(id));
+    }
+
+    private Specification<Destino> contem(String campo, String valor) {
+        String padrao = "%" + valor.toLowerCase() + "%";
+        return (root, query, cb) -> cb.like(cb.lower(root.get(campo)), padrao);
     }
 
     private double arredondar(double valor) {
