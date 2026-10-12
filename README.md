@@ -1,152 +1,140 @@
 # Agenda API — Agência de Viagem
 
-API RESTful desenvolvida em **Java 17 + Spring Boot 3** para uma agência de viagens,
-conforme o desafio proposto. Não há integração com banco de dados nem segurança —
-os dados ficam em memória, dentro da camada de serviço, como pedido no enunciado.
+API RESTful em **Java 17 + Spring Boot 3** para uma agência de viagens.
+
+* **Desafio 1** — API com camada de serviço e dados em memória.
+* **Desafio 2** (esta versão) — mesma API, agora com **PostgreSQL via Spring Data JPA** e
+  **Spring Security** (autenticação com usuários do banco + autorização por perfil).
+
+Os endpoints e o formato do JSON do desafio 1 foram mantidos.
 
 ## Como executar
 
-Pré-requisitos: JDK 17+ e Maven (ou use o `./mvnw` se preferir gerar o wrapper).
+Pré-requisitos: JDK 17+, Maven e Docker (ou um PostgreSQL local).
 
 ```bash
-mvn spring-boot:run
+docker compose up -d          # sobe o PostgreSQL (banco: agenda_api)
+mvn spring-boot:run           # sobe a API em http://localhost:8080
 ```
 
-A API sobe em `http://localhost:8080`.
+Configuração em `src/main/resources/application.yml`. Credenciais do banco podem ser trocadas
+pelas variáveis de ambiente `DB_URL`, `DB_USER` e `DB_PASSWORD`
+(padrão: `jdbc:postgresql://localhost:5432/agenda_api`, `postgres` / `postgres`).
+As tabelas são criadas automaticamente (`ddl-auto: update`).
+
+## Banco de dados
+
+| Tabela | Descrição |
+|---|---|
+| `destinos` | nome, localizacao, descricao, preco_pacote, nota_media, quantidade_avaliacoes |
+| `reservas` | nome_cliente, numero_pessoas, data_reserva, `destino_id` (FK → destinos) |
+| `usuarios` | nome, email (único), senha (BCrypt), ativo |
+| `perfis` | ADMIN, CLIENTE, PARCEIRO |
+| `usuarios_perfis` | relação N:N entre usuários e perfis |
+
+Excluir um destino remove também as reservas dele (cascade).
+
+## Segurança
+
+Autenticação **HTTP Basic**: o `UsuarioDetailsService` busca o usuário pelo e-mail no banco e
+compara a senha com o hash BCrypt. Cada perfil vira a authority `ROLE_<perfil>`.
+
+Usuários criados na primeira execução (`DataInitializer`):
+
+| Perfil | E-mail | Senha |
+|---|---|---|
+| ADMIN | admin@agencia.com | admin123 |
+| CLIENTE | cliente@agencia.com | cliente123 |
+| PARCEIRO | parceiro@agencia.com | parceiro123 |
+
+### Permissões por perfil
+
+| Endpoint | ADMIN | CLIENTE | PARCEIRO | Anônimo |
+|---|:-:|:-:|:-:|:-:|
+| `POST /api/auth/registro` (cria CLIENTE) | ✅ | ✅ | ✅ | ✅ |
+| `GET /api/auth/me` | ✅ | ✅ | ✅ | ❌ |
+| `GET /api/destinos`, `/pesquisa`, `/{id}` | ✅ | ✅ | ✅ | ❌ |
+| `POST /api/destinos` | ✅ | ❌ | ❌ | ❌ |
+| `PUT /api/destinos/{id}` | ✅ | ❌ | ❌ | ❌ |
+| `DELETE /api/destinos/{id}` | ✅ | ❌ | ❌ | ❌ |
+| `PATCH /api/destinos/{id}/avaliacoes` | ✅ | ✅ | ❌ | ❌ |
+| `POST /api/destinos/{id}/reservas` | ✅ | ✅ | ❌ | ❌ |
+| `GET /api/destinos/{id}/reservas` | ✅ | ❌ | ❌ | ❌ |
+| `/api/usuarios/**` (listar, trocar perfis, desativar) | ✅ | ❌ | ❌ | ❌ |
+
+Sem credenciais ou com senha errada → `401 Unauthorized`. Perfil sem permissão → `403 Forbidden`.
 
 ## Estrutura do projeto
 
 ```
 src/main/java/com/agenciaviagem/agendaapi/
 ├── AgendaApiApplication.java
-├── model/
-│   ├── Destino.java
-│   └── Reserva.java
-├── dto/
-│   ├── DestinoRequest.java
-│   ├── AvaliacaoRequest.java
-│   └── ReservaRequest.java
-├── service/
-│   ├── DestinoService.java      -> regra de negócio de destinos
-│   └── ReservaService.java      -> regra de negócio de reservas
-├── controller/
-│   ├── DestinoController.java   -> endpoints /api/destinos
-│   └── ReservaController.java   -> endpoints /api/destinos/{id}/reservas
-└── exception/
-    ├── ResourceNotFoundException.java
-    └── GlobalExceptionHandler.java
+├── config/
+│   ├── SecurityConfig.java        -> regras de acesso por perfil + BCrypt
+│   └── DataInitializer.java       -> perfis e usuários iniciais
+├── model/                         -> entidades JPA: Destino, Reserva, Usuario, Perfil
+├── repository/                    -> Spring Data JPA: Destino, Reserva, Usuario, Perfil
+├── security/
+│   └── UsuarioDetailsService.java -> autenticação via banco
+├── dto/                           -> DestinoRequest, AvaliacaoRequest, ReservaRequest, RegistroRequest, PerfisRequest
+├── service/                       -> DestinoService, ReservaService (regra de negócio)
+├── controller/                    -> Destino, Reserva, Auth, Usuario
+└── exception/                     -> ResourceNotFoundException, GlobalExceptionHandler
 ```
 
-A separação entre `controller` (recebe a requisição HTTP) e `service` (lógica de
-negócio) atende ao critério de avaliação sobre a camada de serviço.
-
-## Endpoints
-
-### 1. Cadastrar destino
-```
-POST /api/destinos
-Content-Type: application/json
-
-{
-  "nome": "Rio de Janeiro",
-  "localizacao": "Rio de Janeiro, Brasil",
-  "descricao": "Cidade maravilhosa, praias e Cristo Redentor",
-  "precoPacote": 1500.00
-}
-```
-Resposta: `201 Created` com o destino criado (id gerado automaticamente).
-
-### 2. Listar todos os destinos
-```
-GET /api/destinos
-```
-Resposta: `200 OK` com a lista de destinos.
-
-### 3. Pesquisar destinos por nome ou localização
-```
-GET /api/destinos/pesquisa?nome=rio
-GET /api/destinos/pesquisa?localizacao=brasil
-GET /api/destinos/pesquisa?nome=rio&localizacao=brasil
-```
-Busca parcial e sem distinção de maiúsculas/minúsculas. Os dois parâmetros são
-opcionais.
-
-### 4. Ver detalhes de um destino
-```
-GET /api/destinos/{id}
-```
-Resposta: `200 OK` com o destino, ou `404 Not Found` se não existir.
-
-### 5. Avaliar um destino (nota de 1 a 10)
-```
-PATCH /api/destinos/{id}/avaliacoes
-Content-Type: application/json
-
-{
-  "nota": 9
-}
-```
-O serviço recalcula a média (`notaMedia`) com base na nota já existente e na
-quantidade de avaliações recebidas até então.
-
-### 6. Excluir um destino
-```
-DELETE /api/destinos/{id}
-```
-Resposta: `204 No Content`, ou `404 Not Found` se o destino não existir.
-
-### Extra: atualizar dados de um destino
-```
-PUT /api/destinos/{id}
-```
-Mesmo corpo do cadastro — sobrescreve os dados cadastrais do destino.
-
-### Extra: reservar um pacote de viagem
-```
-POST /api/destinos/{id}/reservas
-Content-Type: application/json
-
-{
-  "nomeCliente": "Maria Souza",
-  "numeroPessoas": 2
-}
-```
-Resposta: `201 Created` com a reserva criada.
+## Endpoints de destinos (iguais ao desafio 1)
 
 ```
-GET /api/destinos/{id}/reservas
-```
-Lista as reservas feitas para aquele destino.
-
-## Tratamento de erros
-
-Erros de validação (`400 Bad Request`) e destino não encontrado
-(`404 Not Found`) retornam um JSON padronizado, por exemplo:
-
-```json
-{
-  "timestamp": "2026-09-13T10:00:00",
-  "status": 404,
-  "erro": "Not Found",
-  "mensagem": "Destino nao encontrado com id: 5"
-}
+POST   /api/destinos                      cadastrar            (ADMIN)
+GET    /api/destinos                      listar               (qualquer perfil)
+GET    /api/destinos/pesquisa?nome=&localizacao=   pesquisar   (qualquer perfil)
+GET    /api/destinos/{id}                 detalhar             (qualquer perfil)
+PUT    /api/destinos/{id}                 atualizar            (ADMIN)
+PATCH  /api/destinos/{id}/avaliacoes      avaliar, nota 1-10   (CLIENTE, ADMIN)
+DELETE /api/destinos/{id}                 excluir              (ADMIN)
+POST   /api/destinos/{id}/reservas        reservar             (CLIENTE, ADMIN)
+GET    /api/destinos/{id}/reservas        listar reservas      (ADMIN)
 ```
 
-## Testando rapidamente com curl
+## Testando com curl
 
 ```bash
-# cadastrar
-curl -X POST http://localhost:8080/api/destinos \
+# cadastrar destino (ADMIN)
+curl -u admin@agencia.com:admin123 -X POST http://localhost:8080/api/destinos \
   -H "Content-Type: application/json" \
   -d '{"nome":"Gramado","localizacao":"Rio Grande do Sul, Brasil","descricao":"Serra gaucha","precoPacote":900.00}'
 
-# listar
-curl http://localhost:8080/api/destinos
+# listar (qualquer perfil)
+curl -u parceiro@agencia.com:parceiro123 http://localhost:8080/api/destinos
 
-# avaliar (assumindo id=1)
-curl -X PATCH http://localhost:8080/api/destinos/1/avaliacoes \
+# avaliar (CLIENTE)
+curl -u cliente@agencia.com:cliente123 -X PATCH http://localhost:8080/api/destinos/1/avaliacoes \
   -H "Content-Type: application/json" -d '{"nota":8}'
 
-# excluir
-curl -X DELETE http://localhost:8080/api/destinos/1
+# reservar (CLIENTE)
+curl -u cliente@agencia.com:cliente123 -X POST http://localhost:8080/api/destinos/1/reservas \
+  -H "Content-Type: application/json" -d '{"nomeCliente":"Maria Souza","numeroPessoas":2}'
+
+# parceiro tentando excluir -> 403
+curl -u parceiro@agencia.com:parceiro123 -X DELETE http://localhost:8080/api/destinos/1
+
+# cadastrar novo cliente
+curl -X POST http://localhost:8080/api/auth/registro -H "Content-Type: application/json" \
+  -d '{"nome":"Joao","email":"joao@teste.com","senha":"123456"}'
 ```
+
+## Testes
+
+```bash
+mvn test
+```
+
+Usam H2 em memória (perfil `test`), sem precisar do PostgreSQL:
+* `DestinoServiceTest` — regras do serviço com JPA real.
+* `DestinoControllerIntegrationTest` — fluxo completo com autenticação.
+* `SegurancaIntegrationTest` — 401/403/200/201 por perfil.
+
+## Tratamento de erros
+
+Validação (`400`), não encontrado (`404`), não autenticado (`401`) e sem permissão (`403`).
+Respostas de erro da aplicação seguem o JSON padronizado `{timestamp, status, erro, mensagem}`.
